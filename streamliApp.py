@@ -4,14 +4,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 import duckdb
 import pandas as pd
+import numpy as np
 
 # Page Configuration
-st.set_page_config(page_title="Client-Specific Holdings Dashboard", page_icon=":chart_with_upwards_trend:", layout="wide")
+st.set_page_config(page_title="Enhanced Holdings Dashboard", page_icon=":chart_with_upwards_trend:", layout="wide")
 st.title("Client-Specific Holdings Dashboard")
-st.markdown("Track individual client Profit and Loss (P&L) in investments across sectors with filters, KPIs, and charts")
+st.markdown("Analyze investments with insights into expected returns, target increase, and performance tracking.")
 
 # Google Sheets Connection
-url = "https://docs.google.com/spreadsheets/d/1v7x1ePdj_Gq2Y1JNArXLMt9sThjjHvQ5u8wQKj969Y8/edit?usp=sharing"
+url = "https://docs.google.com/spreadsheets/d/1bTT7R7hImTFME7ZLqpWrFp_ZqVFOCryh8iwemVos4EQ/edit?usp=sharing"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Loading Data
@@ -20,56 +21,75 @@ def load_data(spreadsheet_url, worksheet_name):
     data = conn.read(spreadsheet=spreadsheet_url, worksheet=worksheet_name)
     return data
 
-data = load_data(url, "358148778")
+data = load_data(url, "290160618")
 
-# Ensure required columns exist before proceeding
-required_columns = ["Client ID", "Client Name", "Product Name", "Investment Amount", "Market Value", "Gain/Loss", "Sector", "Risk Level"]
+# Ensure required columns exist
+required_columns = ["Client ID", "Client Name", "Product Name", "Investment Amount", "Market Value", 
+                    "Gain/Loss", "Sector", "Risk Level", "Annualized Expected Growth", "Actual Annual Growth"]
 missing_columns = [col for col in required_columns if col not in data.columns]
 
 if missing_columns:
     st.error(f"The following required columns are missing from the dataset: {missing_columns}")
 else:
-    # Sidebar Filters
+    # Sidebar Filters: Select Client
     st.sidebar.header("Data & Filters")
-    st.sidebar.write("Select a client to view their investment details")
+    st.sidebar.write("Select a client to view specific details")
     clients = data["Client Name"].unique()
-    selected_client = st.sidebar.selectbox("Select Client", clients)
+    selected_client = st.sidebar.selectbox("Select a Client", clients)
 
-    # Filter data based on the selected client
+    # Filter data for the selected client
     client_data = data[data["Client Name"] == selected_client]
 
+    # Display Client-Specific Data
+    st.subheader(f"Investment Details for {selected_client}")
+    st.dataframe(client_data)
+
     #######################################
-    # DISPLAY KPIs
+    # KPI Section
     #######################################
     st.subheader(f"Key Performance Indicators (KPIs) for {selected_client}")
 
     def plot_kpi(label, value, prefix="", suffix="", color=""):
         fig = go.Figure(go.Indicator(
-            mode="number+delta",
+            mode="number",
             value=value,
-            number={"prefix": prefix, "suffix": suffix, "font.size": 24},
-            title={"text": label, "font": {"size": 20}},
+            number={"prefix": prefix, "suffix": suffix, "font.size": 20},
+            title={"text": label, "font": {"size": 18}},
         ))
-        fig.update_layout(height=90, margin=dict(t=20, b=0), plot_bgcolor="white")
+        fig.update_layout(height=100, margin=dict(t=10, b=0), plot_bgcolor="white")
         st.plotly_chart(fig, use_container_width=True)
 
-    kpi1, kpi2, kpi3 = st.columns(3)
-    with kpi1:
-        total_investment = client_data["Investment Amount"].sum()
+    # Calculate KPIs
+    total_investment = client_data["Investment Amount"].sum()
+    total_market_value = client_data["Market Value"].sum()
+    net_gain_loss = total_market_value - total_investment
+    annual_growth_required = client_data["Annualized Expected Growth"].mean()
+    actual_annual_growth = client_data["Actual Annual Growth"].mean()
+
+    kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+    with kpi_col1:
         plot_kpi("Total Investment", total_investment, prefix="$")
-
-    with kpi2:
-        total_market_value = client_data["Market Value"].sum()
-        plot_kpi("Total Market Value", total_market_value, prefix="$")
-
-    with kpi3:
-        net_gain_loss = total_market_value - total_investment
+    with kpi_col2:
+        plot_kpi("Market Value", total_market_value, prefix="$")
+    with kpi_col3:
         plot_kpi("Net Gain/Loss", net_gain_loss, prefix="$")
+    with kpi_col4:
+        plot_kpi("Target Annual Growth", annual_growth_required, suffix="%")
+
+    #######################################
+    # User Input for Expected Returns
+    #######################################
+    st.sidebar.subheader("Set Target Returns")
+    target_increase = st.sidebar.number_input("Target Increase ($)", value=100000, step=10000)
+    time_period = st.sidebar.number_input("Time Period (Years)", value=3, step=1)
+
+    if target_increase > 0 and time_period > 0:
+        expected_annual_growth = ((target_increase / total_investment) ** (1 / time_period) - 1) * 100
+        st.sidebar.write(f"Expected Annual Growth to meet target: {expected_annual_growth:.2f}%")
 
     #######################################
     # DATA QUERYING & AT-RISK INVESTMENTS
     #######################################
-
     sql = """
     SELECT
         "Client ID",
@@ -89,8 +109,9 @@ else:
     st.dataframe(df_protip_data)
 
     #######################################
-    # VISUALIZATION FUNCTIONS
+    # Visualization Functions
     #######################################
+    st.subheader("Investment Performance")
 
     def plot_sector_performance(client_data):
         sector_data = duckdb.query(
@@ -138,20 +159,15 @@ else:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    #######################################
-    # DASHBOARD LAYOUT
-    #######################################
-    st.subheader(f"Investment Performance by Sector and Holdings for {selected_client}")
+    # Display Visualizations
     sector_col, holdings_col = st.columns(2)
-
     with sector_col:
         plot_sector_performance(client_data)
-
     with holdings_col:
         plot_top_holdings(client_data)
 
     #######################################
-    # STYLING ENHANCEMENTS
+    # Styling Enhancements
     #######################################
     st.markdown(
         """
@@ -162,4 +178,5 @@ else:
         """,
         unsafe_allow_html=True
     )
-    st.write("Use the sidebar to select a client and view specific data on their investment performance.")
+
+    st.write("Refine insights with sidebar filters and explore sector-wise performance and top holdings.")
